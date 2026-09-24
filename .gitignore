@@ -1,0 +1,27 @@
+# Build environment (disposable -- recreate with:
+#   python -m venv .venv-build
+#   .venv-build\Scripts\python -m pip install pdfplumber openpyxl pyinstaller)
+.venv-build/
+venv/
+.venv/
+
+# PyInstaller intermediates (dist/ is kept -- it holds the shipped .exe)
+build/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Tool output, generated at runtime next to the app
+Reconciliation_Output.xlsx
+reconciliation_log.txt
+~$*.xlsx
+
+# OS / editor cruft
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
