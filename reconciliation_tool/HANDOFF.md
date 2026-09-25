@@ -173,13 +173,15 @@ and leaves the estimate row as Pending. That is expected, not a bug.
 ```
 reconciliation_tool/
 ├── main.py                  entry point; sets APP_DIR, wires logging + GUI
-├── requirements.txt         pdfplumber, openpyxl
+├── requirements.txt         pdfplumber, openpyxl, pywebview
 └── app/
     ├── __init__.py
     ├── pdf_estimate.py      extract_estimate_fields(path) -> dict
     ├── pdf_bill.py          extract_bill_fields(path) -> dict
     ├── excel_store.py       ExcelStore class + compute_status()
-    ├── gui.py               Tkinter UI (ReconciliationApp, run_app)
+    ├── processing.py        process_estimate_folder / process_billing_folder (UI-free)
+    ├── web_ui.py            pywebview window + Api class exposed to JS (run_app)
+    ├── ui/                  index.html, style.css, app.js (vanilla, no CDN)
     └── logger_setup.py      file + console logging
 ```
 
@@ -201,10 +203,12 @@ Raises `BillExtractionError` on a missing required field.
 False if MRD already present), `apply_bill(fields)` (returns a result dict, or
 None if no matching MRD), `save()`, `overall_counts()`.
 
-**`gui.ReconciliationApp`**: two folder buttons → `_process_estimate_folder()`
-/ `_process_billing_folder()` run on background threads; buttons disable during
-a run to prevent concurrent Excel writes; all widget updates marshalled via
-`root.after(0, ...)`.
+**UI (pywebview, replaced the Tkinter `gui.py`)**: the user picks an Estimate
+and/or Billing folder (each card shows the path + PDF count), then clicks
+**Run**. `web_ui.Api.run()` processes estimates first, then bills, saves once,
+and returns the per-run results + `store.summary()`. A lock prevents overlapping
+runs; progress is pushed to the page via `window.evaluate_js("onProgress(...)")`.
+The page renders in Windows' built-in Edge WebView2 (present on Windows 10/11).
 
 ---
 
@@ -222,7 +226,7 @@ a run to prevent concurrent Excel writes; all widget updates marshalled via
 ## 6. Where things stand / what's left
 
 ### Done — packaging complete
-**`dist\EstimateVsBillReconciliation.exe` — 34 MB, built and verified.**
+**`dist\EstimateVsBillReconciliation.exe` — 30 MB (pywebview build), built and verified.**
 
 Verified after building: the exe launches, writes `reconciliation_log.txt`
 beside itself (confirming the frozen-path fix below), and — via a throwaway
@@ -244,9 +248,10 @@ Always build like this:
 ```
 cd reconciliation_tool
 python -m venv .venv-build
-.venv-build\Scripts\python -m pip install pdfplumber openpyxl pyinstaller
+.venv-build\Scripts\python -m pip install pdfplumber openpyxl pywebview pyinstaller
 .venv-build\Scripts\pyinstaller --name "EstimateVsBillReconciliation" ^
-    --onefile --windowed --clean --noconfirm main.py
+    --onefile --windowed --clean --noconfirm ^
+    --add-data "app/ui;app/ui" main.py
 ```
 → produces `dist\EstimateVsBillReconciliation.exe`.
 
@@ -268,6 +273,24 @@ API key later. The plug-in points are `extract_estimate_fields()` in
 `app/pdf_estimate.py` and `extract_bill_fields()` in `app/pdf_bill.py` — as
 long as they keep returning the same field dicts documented in §4, everything
 downstream (Excel store, status logic, GUI, dashboard) keeps working unchanged.
+
+### Needs-review issues (added 2026-09-25)
+`process_estimate_folder` / `process_billing_folder` now also return an
+`issues` list (`severity`, `file`, `mrd`, `patient`, `problem`, `detail`),
+which `web_ui.Api.run()` passes through as `issues` and the UI shows in a
+**Needs review** tab (red count badge; the tab opens automatically when a run
+finds anything). What is flagged:
+
+| Problem | Severity |
+|---|---|
+| Bill MRD has no estimate (detail names any estimate with the same patient name under another MRD) | error |
+| Estimate MRD already on file for a *different* patient name (estimate not added) | error |
+| Estimate / bill PDF could not be read | error |
+| Bill matched on MRD but patient name differs (bill still applied) | warning |
+| Annexure charges don't sum to the Summary Total | warning |
+
+Names are compared case- and whitespace-insensitively (`excel_store.normalize_name`).
+The `dist\` exe predates this and must be rebuilt.
 
 ### Open / unconfirmed
 - The extra `Duration of Stay` / `Estimation` columns need user sign-off (§2).

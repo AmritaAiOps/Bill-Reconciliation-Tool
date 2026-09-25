@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 
-from app.gui import run_app
+from app.web_ui import run_app
 from app.logger_setup import setup_logging
 
 # When frozen by PyInstaller, __file__ lives in a temp dir that is deleted on

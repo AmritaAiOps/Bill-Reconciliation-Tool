@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Estimate vs Bill Reconciliation</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute">
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></symbol>
+    <symbol id="i-sheet" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M4 15h16M10 3v18"/></symbol>
+    <symbol id="i-log" viewBox="0 0 24 24"><path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.2v.1"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></symbol>
+  </svg>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo"><svg><use href="#i-check"/></svg></div>
+      <div>
+        <h1>Reconciliation</h1>
+        <div class="sub" id="workbook">Estimate vs Bill</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn text" id="open-log"><svg><use href="#i-log"/></svg>Log</button>
+      <button class="btn text" id="open-excel"><svg><use href="#i-sheet"/></svg>Open Excel</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Run panel -->
+    <section class="run-panel reveal">
+      <button class="folder" id="folder-estimate" type="button">
+        <span class="folder-icon"><svg class="ic-folder"><use href="#i-folder"/></svg><svg class="ic-check"><use href="#i-check"/></svg></span>
+        <span class="folder-text">
+          <span class="folder-title">Estimate folder</span>
+          <span class="path">Choose Estimate Performa PDFs</span>
+        </span>
+        <span class="clear" role="button" title="Clear"><svg><use href="#i-x"/></svg></span>
+      </button>
+
+      <button class="folder" id="folder-billing" type="button">
+        <span class="folder-icon"><svg class="ic-folder"><use href="#i-folder"/></svg><svg class="ic-check"><use href="#i-check"/></svg></span>
+        <span class="folder-text">
+          <span class="folder-title">Billing folder</span>
+          <span class="path">Choose IP Bill PDFs</span>
+        </span>
+        <span class="clear" role="button" title="Clear"><svg><use href="#i-x"/></svg></span>
+      </button>
+
+      <div class="run-col">
+        <button class="btn run" id="run" disabled>
+          <span class="run-inner"><svg><use href="#i-play"/></svg><span>Run</span></span>
+          <span class="spinner"></span>
+        </button>
+        <div class="progress"><div class="progress-bar" id="progress-bar"></div></div>
+        <div class="progress-label" id="progress-label">Choose at least one folder</div>
+      </div>
+    </section>
+
+    <!-- Overview -->
+    <section class="kpis" id="kpis"></section>
+
+    <section class="money reveal" style="--d:3">
+      <div class="money-item">
+        <span class="money-label">Total estimated</span>
+        <span class="money-val" id="m-estimate">₹ 0.00</span>
+      </div>
+      <div class="money-item">
+        <span class="money-label">Total billed</span>
+        <span class="money-val" id="m-billed">₹ 0.00</span>
+      </div>
+      <div class="money-item">
+        <span class="money-label" title="Estimate − billed, for patients that have a bill">Net difference</span>
+        <span class="money-val" id="m-net">₹ 0.00</span>
+      </div>
+    </section>
+
+    <!-- Tabs -->
+    <section class="tabs-card reveal" style="--d:4">
+      <div class="tabs-head">
+        <nav class="tabs">
+          <button class="tab active" data-tab="all">All patients</button>
+          <button class="tab" data-tab="run" id="tab-run">This run</button>
+          <button class="tab" data-tab="issues" id="tab-issues">Needs review<span class="tab-count" id="issues-count" hidden></span></button>
+          <span class="tab-ink" id="tab-ink"></span>
+        </nav>
+        <div class="toolbar" id="toolbar-all">
+          <span id="filter-label" class="filter-chip" hidden></span>
+          <label class="search">
+            <svg><use href="#i-search"/></svg>
+            <input type="search" id="search" placeholder="Search MRD or name">
+          </label>
+          <span id="count" class="muted"></span>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="panel-all">
+        <div class="table-wrap">
+          <table id="patients"><thead></thead><tbody></tbody></table>
+          <div class="empty-state" id="patients-empty" hidden>
+            <svg><use href="#i-folder"/></svg>
+            <div>No patients yet</div>
+            <span>Choose an estimate folder and click Run.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="panel-run" hidden>
+        <div class="run-summary" id="run-label">Results from the latest billing folder appear here.</div>
+        <div class="table-wrap">
+          <table id="run-table"><thead></thead><tbody></tbody></table>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="panel-issues" hidden>
+        <div class="run-summary" id="issues-label">Problems found in the latest run appear here.</div>
+        <div class="table-wrap">
+          <table id="issues-table"><thead></thead><tbody></tbody></table>
+          <div class="empty-state" id="issues-empty">
+            <svg><use href="#i-check"/></svg>
+            <div>Nothing to review</div>
+            <span>Mismatched MRDs, name differences and unreadable PDFs will show up here.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer><span class="status-dot"></span><span id="status">Loading…</span></footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
