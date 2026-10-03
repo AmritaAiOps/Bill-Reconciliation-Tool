@@ -12,8 +12,11 @@ const ANIMATE_ROWS = 30;   // only the first rows get the entrance animation, ke
 const PATIENT_COLUMNS = [
   { key: "MRD Number", label: "MRD" },
   { key: "Patient Name", label: "Patient" },
-  { key: "Admitting Doctor", label: "Doctor" },
+  { key: "Doctor Name", label: "Doctor" },
+  { key: "Speciality", label: "Speciality" },
+  { key: "Surgery", label: "Surgery" },
   { key: "Bed Type", label: "Bed type" },
+  { key: "Duration of Stay (Days)", label: "Days" },
   { key: "Estimate Amount", label: "Estimate", num: true },
   { key: "Billed Amount", label: "Billed", num: true },
   { key: "Difference", label: "Difference", num: true, diff: true },
@@ -412,13 +415,57 @@ function wireUi() {
     const err = await api().open_log();
     if (err) showStatus(err, "error");
   });
+  wireSettings();
   moveInk();
+}
+
+// --------------------------------------------------------------- settings --
+function renderLocations(loc) {
+  $("#loc-output").textContent = loc.output_dir;
+  $("#loc-log").textContent = loc.log_dir;
+  const isDefault = loc.output_dir === loc.default_output_dir && loc.log_dir === loc.default_log_dir;
+  $("#loc-reset").disabled = isDefault;
+  $("#loc-reset").style.visibility = isDefault ? "hidden" : "visible";
+}
+
+async function applyLocationChange(call) {
+  if (state.running) return;
+  const res = await call();
+  if (!res) return;   // folder dialog cancelled
+  renderLocations(res.locations);
+  const msg = $("#loc-msg");
+  msg.textContent = res.message;
+  msg.classList.toggle("error", !res.ok);
+  const info = await api().get_info();
+  $("#workbook").textContent = info.workbook;
+  $("#workbook").title = info.workbook_path;
+  applySummary(await api().get_summary(), true);   // may be a different workbook now
+  showStatus(res.message, res.ok ? "ok" : "error");
+}
+
+function wireSettings() {
+  const dlg = $("#settings");
+  $("#open-settings").addEventListener("click", async () => {
+    $("#loc-msg").textContent = "";
+    renderLocations(await api().get_locations());
+    dlg.showModal();
+  });
+  $("#settings-close").addEventListener("click", () => dlg.close());
+  dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });   // backdrop
+  dlg.querySelectorAll("[data-change]").forEach((b) => b.addEventListener("click", () =>
+    applyLocationChange(() => b.dataset.change === "output" ? api().change_output_dir() : api().change_log_dir())));
+  dlg.querySelectorAll("[data-open]").forEach((b) => b.addEventListener("click", async () => {
+    const err = await api().open_folder(b.dataset.open);
+    if (err) showStatus(err, "error");
+  }));
+  $("#loc-reset").addEventListener("click", () => applyLocationChange(() => api().reset_locations()));
 }
 
 async function init() {
   try {
     const info = await api().get_info();
     $("#workbook").textContent = info.workbook;
+    $("#workbook").title = info.workbook_path;
     applySummary(await api().get_summary(), true);
     showStatus("Ready · choose the estimate and/or billing folder, then click Run");
   } catch (e) {

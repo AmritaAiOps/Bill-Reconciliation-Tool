@@ -5,8 +5,15 @@
 Each run also returns an `issues` list: problems a person should look at
 (failed extractions, bills with no matching estimate, name mismatches).
 Every issue is a dict with keys severity ("error" | "warning"), file, mrd,
-patient, problem (short title) and detail (what to check)."""
+patient, problem (short title) and detail (what to check).
+
+Each run also returns `done_files`: the PDFs whose data is now in the store
+cleanly. The caller removes them with `recycle_files` once the workbook has
+been saved; anything not listed (failed, unmatched, flagged) stays put."""
+import ctypes
 import logging
+import sys
+from ctypes import wintypes
 from pathlib import Path
 
 from .excel_store import normalize_name
@@ -37,6 +44,7 @@ def process_estimate_folder(store, folder, on_progress=_noop) -> dict:
     on_progress(0, len(files))
     added, skipped, failed = 0, 0, 0
     issues = []
+    done_files = []
     for i, f in enumerate(files, 1):
         try:
             fields = extract_estimate_fields(f)
@@ -53,9 +61,12 @@ def process_estimate_folder(store, folder, on_progress=_noop) -> dict:
                         f"MRD {mrd} is on file for '{existing}', but this estimate is for "
                         f"'{name}'. The estimate was not added -- check the MRD Number.",
                         mrd, name))
+                else:
+                    done_files.append(f)  # same patient already on file: a duplicate
             else:
                 store.add_estimate(fields)
                 added += 1
+                done_files.append(f)
                 logger.info("Estimate added: %s (MRD %s)", f.name, mrd)
         except EstimateExtractionError as e:
             failed += 1
@@ -69,7 +80,7 @@ def process_estimate_folder(store, folder, on_progress=_noop) -> dict:
                                  f"Unexpected error: {e}. See reconciliation_log.txt."))
         on_progress(i, len(files))
     return {"files": len(files), "added": added, "skipped": skipped, "failed": failed,
-            "issues": issues}
+            "issues": issues, "done_files": done_files}
 
 
 def process_billing_folder(store, folder, on_progress=_noop) -> dict:
@@ -77,6 +88,7 @@ def process_billing_folder(store, folder, on_progress=_noop) -> dict:
     on_progress(0, len(files))
     run_rows = []
     issues = []
+    done_files = []
     matched, unmatched, failed = 0, 0, 0
     for i, f in enumerate(files, 1):
         try:
@@ -119,6 +131,8 @@ def process_billing_folder(store, folder, on_progress=_noop) -> dict:
                         f"Matched on MRD {mrd}, but the estimate says '{result['patient_name']}' "
                         f"and the bill says '{name}'. Confirm it is the same patient.",
                         mrd, name))
+                elif fields.get("annexure_sanity_ok", True):
+                    done_files.append(f)  # flagged bills are kept for review
         except BillExtractionError as e:
             failed += 1
             logger.error("Bill extraction FAILED for %s: %s", f.name, e)
@@ -131,4 +145,57 @@ def process_billing_folder(store, folder, on_progress=_noop) -> dict:
                                  f"Unexpected error: {e}. See reconciliation_log.txt."))
         on_progress(i, len(files))
     return {"files": len(files), "matched": matched, "unmatched": unmatched,
-            "failed": failed, "run_rows": run_rows, "issues": issues}
+            "failed": failed, "run_rows": run_rows, "issues": issues,
+            "done_files": done_files}
+
+
+class _SHFILEOPSTRUCTW(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", wintypes.HWND),
+        ("wFunc", wintypes.UINT),
+        ("pFrom", wintypes.LPCWSTR),
+        ("pTo", wintypes.LPCWSTR),
+        ("fFlags", ctypes.c_ushort),
+        ("fAnyOperationsAborted", wintypes.BOOL),
+        ("hNameMappings", ctypes.c_void_p),
+        ("lpszProgressTitle", wintypes.LPCWSTR),
+    ]
+
+
+_FO_DELETE = 0x0003
+_FOF_SILENT = 0x0004
+_FOF_NOCONFIRMATION = 0x0010
+_FOF_ALLOWUNDO = 0x0040
+_FOF_NOERRORUI = 0x0400
+
+
+def _send_to_recycle_bin(path: Path):
+    """Move a file to the Windows Recycle Bin. Raises OSError on failure."""
+    if sys.platform != "win32":
+        raise OSError("Recycle Bin is only supported on Windows")
+    op = _SHFILEOPSTRUCTW(
+        wFunc=_FO_DELETE,
+        pFrom=str(path.resolve()) + "\0",  # list must be double-null terminated
+        fFlags=_FOF_ALLOWUNDO | _FOF_NOCONFIRMATION | _FOF_SILENT | _FOF_NOERRORUI,
+    )
+    rc = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+    if rc != 0 or op.fAnyOperationsAborted or path.exists():
+        raise OSError(f"SHFileOperation failed (code {rc:#x})")
+
+
+def recycle_files(paths) -> list:
+    """Send processed PDFs to the Recycle Bin. Call only after the workbook
+    has been saved. Returns warning issues for files that could not be removed."""
+    issues = []
+    for f in paths:
+        f = Path(f)
+        try:
+            _send_to_recycle_bin(f)
+            logger.info("Moved processed PDF to Recycle Bin: %s", f)
+        except OSError as e:
+            logger.warning("Could not remove processed PDF %s: %s", f, e)
+            issues.append(_issue(WARNING, f.name, "Could not remove PDF",
+                                 f"Its data is already in Excel, but the file could not be "
+                                 f"moved to the Recycle Bin ({e}). Close it if it is open, "
+                                 f"then delete it manually so it isn't read again."))
+    return issues

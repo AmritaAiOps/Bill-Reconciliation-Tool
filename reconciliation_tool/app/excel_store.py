@@ -7,11 +7,17 @@ from openpyxl import Workbook, load_workbook
 logger = logging.getLogger(__name__)
 
 COLUMNS = [
-    "MRD Number", "Patient Name", "Admitting Doctor", "Speciality", "Bed Type",
-    "Duration of Stay", "Estimation", "Expected D.O.A",
+    "MRD Number", "Patient Name", "Doctor Name", "Speciality", "Surgery", "Bed Type",
+    "Duration of Stay (Days)", "Estimation", "Expected D.O.A",
     "Estimate Amount", "Billed Amount", "Difference", "Status",
 ]
 COL_INDEX = {name: i + 1 for i, name in enumerate(COLUMNS)}
+
+# Old header names -> current ones, for migrating workbooks made by earlier versions.
+_HEADER_ALIASES = {
+    "Admitting Doctor": "Doctor Name",
+    "Duration of Stay": "Duration of Stay (Days)",
+}
 
 STATUS_CLOSED = "Closed"
 STATUS_LESS = "Less Amount"
@@ -46,12 +52,34 @@ class ExcelStore:
         if self.path.exists():
             self.wb = load_workbook(self.path)
             self.ws = self.wb.active
+            self._migrate_columns()
         else:
             self.wb = Workbook()
             self.ws = self.wb.active
             self.ws.title = "Reconciliation"
             self.ws.append(COLUMNS)
         self._index_rows()
+
+    def _migrate_columns(self):
+        """Rewrite the sheet under the current COLUMNS if its header row differs
+        (cells are addressed by position, so an old layout would be misread)."""
+        header = [c.value for c in self.ws[1]] if self.ws.max_row >= 1 else []
+        while header and header[-1] is None:
+            header.pop()
+        if header == COLUMNS:
+            return
+        names = [_HEADER_ALIASES.get(h, h) for h in header]
+        rows = []
+        for values in self.ws.iter_rows(min_row=2, values_only=True):
+            if any(v is not None for v in values):
+                rows.append(dict(zip(names, values)))
+        self.ws.delete_rows(1, self.ws.max_row)
+        self.ws.append(COLUMNS)
+        for r in rows:
+            self.ws.append([r.get(name) for name in COLUMNS])
+        dropped = [n for n in names if n and n not in COLUMNS]
+        logger.info("Migrated %s to the current column layout (%d rows)%s", self.path.name,
+                    len(rows), f"; dropped columns {dropped}" if dropped else "")
 
     def _index_rows(self):
         self.mrd_row = {}
@@ -84,10 +112,12 @@ class ExcelStore:
         row = [None] * len(COLUMNS)
         row[COL_INDEX["MRD Number"] - 1] = mrd
         row[COL_INDEX["Patient Name"] - 1] = fields.get("patient_name", "")
-        row[COL_INDEX["Admitting Doctor"] - 1] = fields.get("admitting_doctor", "")
+        row[COL_INDEX["Doctor Name"] - 1] = fields.get("admitting_doctor", "")
         row[COL_INDEX["Speciality"] - 1] = fields.get("speciality", "")
+        row[COL_INDEX["Surgery"] - 1] = fields.get("surgery", "")
         row[COL_INDEX["Bed Type"] - 1] = fields.get("bed_type", "")
-        row[COL_INDEX["Duration of Stay"] - 1] = fields.get("duration_of_stay", "")
+        row[COL_INDEX["Duration of Stay (Days)"] - 1] = fields.get(
+            "duration_days", fields.get("duration_of_stay", ""))
         row[COL_INDEX["Estimation"] - 1] = fields.get("estimation_label", "")
         row[COL_INDEX["Expected D.O.A"] - 1] = fields.get("expected_doa", "")
         row[COL_INDEX["Estimate Amount"] - 1] = fields.get("estimate_amount")
@@ -139,6 +169,7 @@ class ExcelStore:
         }
 
     def save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         self.wb.save(self.path)
 
     def overall_counts(self) -> dict:

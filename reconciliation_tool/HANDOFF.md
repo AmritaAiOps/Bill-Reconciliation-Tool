@@ -61,13 +61,34 @@ summary Total.
 **Deviation actually implemented (not yet signed off):** two extra trailing
 columns, **Duration of Stay** and **Estimation**, were kept because the spec
 asks to extract them in step 2 but omits them from the column list in step 5.
-Current implemented order is:
+Current implemented order (updated 2026-09-27) is:
 
 ```
-MRD Number | Patient Name | Admitting Doctor | Speciality | Bed Type |
-Duration of Stay | Estimation | Expected D.O.A | Estimate Amount |
+MRD Number | Patient Name | Doctor Name | Speciality | Surgery | Bed Type |
+Duration of Stay (Days) | Estimation | Expected D.O.A | Estimate Amount |
 Billed Amount | Difference | Status
 ```
+
+- **Doctor Name** / **Speciality**: from the Estimate Performa header.
+- **Surgery**: Particulars of every Estimated Expenditure row whose Type is
+  `Service`, joined with `"; "` (wrapped names are rejoined).
+- **Duration of Stay (Days)**: Quantity of the `Bed` row; falls back to the
+  header "Duration of Stay" if there is no Bed row.
+
+A workbook written with the old 12-column layout is migrated in place on load
+(`ExcelStore._migrate_columns`; `Admitting Doctor` → `Doctor Name`,
+`Duration of Stay` → `Duration of Stay (Days)`, Surgery blank for old rows).
+
+### Processed PDFs are removed
+After a run's workbook save **succeeds**, PDFs whose data went in cleanly are
+sent to the Windows Recycle Bin (`processing.recycle_files`, via
+`SHFileOperationW`, no extra dependency):
+- Estimates: newly added, or a duplicate of an MRD already on file for the same patient.
+- Bills: matched with no name mismatch and a passing annexure sanity check.
+
+Everything else (failed reads, unmatched bills, MRD conflicts, flagged bills)
+stays in its folder. If the save fails nothing is removed; if a file can't be
+removed (e.g. open in a viewer) a "Could not remove PDF" warning is shown.
 
 ### Dashboard
 - After each billing run: "Closed in this run" and "Less Amount in this run"
@@ -172,7 +193,7 @@ and leaves the estimate row as Pending. That is expected, not a bug.
 
 ```
 reconciliation_tool/
-├── main.py                  entry point; sets APP_DIR, wires logging + GUI
+├── main.py                  entry point; loads folder settings, migrates old workbook, wires logging + GUI
 ├── requirements.txt         pdfplumber, openpyxl, pywebview
 └── app/
     ├── __init__.py
@@ -182,16 +203,35 @@ reconciliation_tool/
     ├── processing.py        process_estimate_folder / process_billing_folder (UI-free)
     ├── web_ui.py            pywebview window + Api class exposed to JS (run_app)
     ├── ui/                  index.html, style.css, app.js (vanilla, no CDN)
-    └── logger_setup.py      file + console logging
+    ├── settings.py          output/log folder locations (defaults, settings.json, moves)
+    └── logger_setup.py      file + console logging (set_log_file swaps the log file)
 ```
 
-Outputs written next to the app: `Reconciliation_Output.xlsx`, `reconciliation_log.txt`.
+### Where the output and log are saved (added 2026-09-27)
+The files no longer go next to the exe. Defaults, the same for every user and
+wherever the exe was launched from:
+
+- `Documents\Bill Reconciliation\Reconciliation_Output.xlsx`
+- `Documents\Bill Reconciliation\Logs\reconciliation_log.txt`
+
+Documents is looked up with `SHGetKnownFolderPath`, so OneDrive-redirected
+Documents folders work. Each user can change either folder from **Settings** in
+the top bar. The choice is kept in
+`%APPDATA%\EstimateVsBillReconciliation\settings.json`. Changing a folder moves the
+file there; if the new folder already has a file of that name, that one is used
+and nothing is overwritten. A saved folder that is no longer available (e.g. an
+unplugged drive) falls back to the default, with a warning in the log.
+
+On first launch, a `Reconciliation_Output.xlsx` next to the exe (or next to
+`main.py` when running from source) is **copied** to the output folder if that
+folder has none yet. The original is left in place as a backup.
 
 ### Module contracts
 
 **`pdf_estimate.extract_estimate_fields(path)`** → dict with keys:
 `mrd_number, patient_name, admitting_doctor, duration_of_stay, speciality,
-expected_doa, bed_type, estimation_label, estimate_amount, source_file`.
+expected_doa, bed_type, estimation_label, estimate_amount, surgery,
+duration_days, source_file`. Text parsing lives in `parse_estimate_text(text)`.
 Raises `EstimateExtractionError` on a missing required field.
 
 **`pdf_bill.extract_bill_fields(path)`** → dict with keys:
@@ -228,8 +268,7 @@ The page renders in Windows' built-in Edge WebView2 (present on Windows 10/11).
 ### Done — packaging complete
 **`dist\EstimateVsBillReconciliation.exe` — 30 MB (pywebview build), built and verified.**
 
-Verified after building: the exe launches, writes `reconciliation_log.txt`
-beside itself (confirming the frozen-path fix below), and — via a throwaway
+Verified after building (before the Documents change in §4): the exe launches, and — via a throwaway
 console probe built from the same venv — correctly parses both sample PDFs,
 writes Excel and computes status while frozen. That last check matters because
 pdfplumber's binary deps (pypdfium2) can fail to bundle in ways that only
@@ -257,15 +296,10 @@ python -m venv .venv-build
 
 (`.venv-build\` is a build artifact — don't ship it, don't commit it.)
 
-**Bug fixed for the frozen build (already applied to `main.py`):** under
-`--onefile`, `Path(__file__).parent` points into a temp extraction dir that is
-deleted on exit, so the Excel output would vanish. `main.py` now does:
-```python
-if getattr(sys, "frozen", False):
-    APP_DIR = Path(sys.executable).resolve().parent
-else:
-    APP_DIR = Path(__file__).resolve().parent
-```
+**Frozen-path gotcha:** under `--onefile`, `Path(__file__).parent` points into
+a temp extraction dir that is deleted on exit. Output now goes to the folders in
+`app/settings.py` (see §4), so this only matters for `main._legacy_dir()`,
+which finds a workbook left next to the exe by older versions.
 
 ### Planned next (user will do this themselves)
 **Swap PDF reading to the Gemini API.** The user will plug in their own Gemini
@@ -293,7 +327,8 @@ Names are compared case- and whitespace-insensitively (`excel_store.normalize_na
 The `dist\` exe predates this and must be rebuilt.
 
 ### Open / unconfirmed
-- The extra `Duration of Stay` / `Estimation` columns need user sign-off (§2).
+- The `Estimation` column still needs user sign-off (§2).
+- The `dist\` exe predates the new columns / PDF removal and must be rebuilt.
 - Never run interactively by a human clicking the real folder-picker dialogs.
   The processing code paths behind those buttons *have* been driven
   programmatically and pass, but the dialogs themselves are untested.

@@ -1,6 +1,6 @@
 # Build environment (disposable -- recreate with:
 #   python -m venv .venv-build
-#   .venv-build\Scripts\python -m pip install pdfplumber openpyxl pyinstaller)
+#   .venv-build\Scripts\python -m pip install pdfplumber openpyxl pywebview pyinstaller)
 .venv-build/
 venv/
 .venv/
@@ -8,6 +8,7 @@ venv/
 # PyInstaller intermediates (dist/ is kept -- it holds the shipped .exe)
 build/
 *.spec
+build_log.txt
 
 # Python
 __pycache__/

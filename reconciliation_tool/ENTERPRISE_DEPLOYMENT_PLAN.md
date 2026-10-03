@@ -22,6 +22,12 @@ Current build problems for enterprise use:
 ## Changes
 
 ### 1. Write output to a per-user folder — `reconciliation_tool/main.py`
+> **Done (2026-09-27), implemented differently from the text below:** the folder is
+> `Documents\Bill Reconciliation\` (log in `...\Logs\`), both are changeable from
+> Settings, and it applies when running from source too. See `app/settings.py` and
+> HANDOFF.md §4. Also note `build.ps1` now exists (progress-bar onefile build);
+> step 2 should extend it rather than replace it.
+
 - When frozen, save `Reconciliation_Output.xlsx` and `reconciliation_log.txt` in
   `Documents\Estimate vs Bill Reconciliation\`. Find Documents with
   `SHGetFolderPathW(CSIDL_PERSONAL)` through `ctypes` so OneDrive-redirected Documents
